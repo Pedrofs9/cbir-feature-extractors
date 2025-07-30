@@ -1,0 +1,40 @@
+name: bcos
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch-lightning=1.8.1
+  - torchmetrics=0.11
+  - wandb
+  - torchvision=0.14
+  - pytorch-cuda=11.6
+  - ipython
+  - matplotlib
+  - jupyterlab
+  - pytorch=1.13
+  - cudnn=8.3
+  - cudatoolkit=11.6
+  - ca-certificates
+  - certifi
+  - openssl
+  - rich
+  - mamba
+  - captum=0.5
+  - einops=0.6
+  - seaborn
+  - pudb
+  - tqdm
+  - lime=0.2.0.1
+  - scikit-image=0.19.3
+  - timm=0.6.12
+  - ipywidgets
+  - pytest
+  - pip:
+    - captum==0.5.0
+    - opencv-python==4.8.0.76
+    - openpyxl==3.1.2
+    - pydicom==2.4.3
+    - quantus==0.4.4
+    - scikit-multilearn==0.2.0
+    - torch==1.13.1
+    - torchvision==0.14.1
