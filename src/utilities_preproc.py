@@ -1,5 +1,4 @@
 
-# ImportsMore actions
 import os
 import string
 from datetime import datetime
@@ -8,11 +7,7 @@ import pandas as pd
 import pickle
 from scipy.spatial.distance import euclidean
 from PIL import Image
-
-# Scikit-Learn Imports
 from sklearn.model_selection import train_test_split
-
-# PyTorch Imports
 import torch
 
 
@@ -268,7 +263,7 @@ def get_pre_image_from_id(patient_info, favorite_images, patient_images, id, ima
     else:
         image_filename = this_patient_image['Image Filename'].item()
         
-        # FIX: Clean any existing _resized suffix before processing
+        # Clean any existing _resized suffix before processing
         base_name = os.path.splitext(image_filename.replace('_resized', ''))[0]
         
         if images_resized_path:
@@ -707,7 +702,7 @@ def collaborative_tabular_normalize(qns_list, min_max_values=None):
     if min_max_values is not None:
         vec_len = len(min_max_values)
     else:
-        vec_len = len(qns_list[0].query_vector)  
+        vec_len = len(qns_list[0].query_vector) 
         min_max_values = []
 
     all_elements = [[] for _ in range(vec_len)]

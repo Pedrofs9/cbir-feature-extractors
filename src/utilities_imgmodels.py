@@ -3,6 +3,7 @@ from PIL import Image
 import timm
 import os
 import subprocess
+
 # PyTorch Imports
 import torch
 import torch.nn as nn
@@ -11,6 +12,7 @@ import torchvision.transforms as transforms
 from torchvision.models import resnet50, ResNet50_Weights, vgg16, VGG16_Weights
 from torch.nn import TransformerDecoder, TransformerDecoderLayer
 from torch.nn import BatchNorm1d
+
 # Transformers Imports
 from transformers import (
     AutoModel,
@@ -694,63 +696,6 @@ class ResNeXt50_32x4d_Base_224(nn.Module):
             pretrained=True,
             num_classes=0  # Removes classification head for feature extraction
         )
-        
-        # Set target layer for CAM
-        self.cam_target_layer = self._determine_target_layer()
-        print(f"Initialized with CAM target layer: {self.cam_target_layer}")
-        self._verify_target_layer()
-
-    def _determine_target_layer(self):
-        """Find the best convolutional layer for CAM"""
-        possible_layers = [
-            "layer4.2.conv3",  # Last conv layer in ResNeXt50
-            "model.layer4.2.conv3",
-            self._find_last_conv_layer()  # Fallback
-        ]
-        
-        for layer in possible_layers:
-            try:
-                module = self.model
-                for part in layer.replace('model.', '').split('.'):
-                    module = getattr(module, part)
-                if isinstance(module, nn.Conv2d):
-                    return layer
-            except AttributeError:
-                continue
-                
-        raise ValueError("Could not determine valid CAM target layer")
-
-    def _find_last_conv_layer(self):
-        """Find the last convolutional layer as fallback"""
-        conv_layers = []
-        for name, module in self.model.named_modules():
-            if isinstance(module, nn.Conv2d):
-                conv_layers.append(name)
-        return conv_layers[-1] if conv_layers else None
-
-    def _verify_target_layer(self):
-        """Verify the target layer exists in the model"""
-        module = self.model
-        parts = self.cam_target_layer.replace('model.', '').split('.')
-        for part in parts:
-            module = getattr(module, part, None)
-            if module is None:
-                conv_layers = [name for name, m in self.model.named_modules() 
-                             if isinstance(m, nn.Conv2d)]
-                raise ValueError(
-                    f"Target layer '{self.cam_target_layer}' not found.\n"
-                    f"Available conv layers:\n{conv_layers[-5:]}"
-                )
-        
-        if not isinstance(module, nn.Conv2d):
-            raise ValueError(f"Target layer {self.cam_target_layer} is not a Conv2d layer")
-
-    def get_target_layer(self):
-        """Get the target layer module by name"""
-        module = self.model
-        for part in self.cam_target_layer.replace('model.', '').split('.'):
-            module = getattr(module, part)
-        return module
 
     def get_transform(self):
         def transform(image_path):
@@ -800,65 +745,7 @@ class DenseNet121_Base_224(nn.Module):
         super(DenseNet121_Base_224, self).__init__()
         # Create model with consistent naming
         self.model = timm.create_model('densenet121', pretrained=True, num_classes=0)
-        
-        # Set target layer with flexible naming
-        self.cam_target_layer = self._determine_target_layer()
-        print(f"Initialized with CAM target layer: {self.cam_target_layer}")
-        
-        # Verify the layer exists
-        self._verify_target_layer()
-
-    def _determine_target_layer(self):
-        """Flexibly determine the target layer name"""
-        possible_layers = [
-            "features.denseblock4.denselayer16.conv2",  # Original
-            "model.features.denseblock4.denselayer16.conv2",  # Possible alternative
-            self._find_last_conv_layer()  # Fallback, not sure if it works well
-        ]
-        
-        for layer in possible_layers:
-            try:
-                module = self.model
-                for part in layer.replace('model.', '').split('.'):
-                    module = getattr(module, part)
-                if isinstance(module, nn.Conv2d):
-                    return layer
-            except AttributeError:
-                continue
-                
-        raise ValueError("Could not determine valid CAM target layer")
-
-    def _find_last_conv_layer(self):
-        """Find the last convolutional layer as fallback"""
-        conv_layers = []
-        for name, module in self.model.named_modules():
-            if isinstance(module, nn.Conv2d):
-                conv_layers.append(name)
-        return conv_layers[-1] if conv_layers else None
-
-    def _verify_target_layer(self):
-        """Verify the target layer exists in the model"""
-        module = self.model
-        parts = self.cam_target_layer.replace('model.', '').split('.')
-        for part in parts:
-            module = getattr(module, part, None)
-            if module is None:
-                conv_layers = [name for name, m in self.model.named_modules() 
-                             if isinstance(m, nn.Conv2d)]
-                raise ValueError(
-                    f"Target layer '{self.cam_target_layer}' not found.\n"
-                    f"Available conv layers:\n{conv_layers[-5:]}"
-                )
-        
-        if not isinstance(module, nn.Conv2d):
-            raise ValueError(f"Target layer {self.cam_target_layer} is not a Conv2d layer")
-
-    def get_target_layer(self):
-        """Get the target layer module by name"""
-        module = self.model
-        for part in self.cam_target_layer.replace('model.', '').split('.'):
-            module = getattr(module, part)
-        return module
+    
 
     def get_transform(self):
         """Image transformation pipeline"""

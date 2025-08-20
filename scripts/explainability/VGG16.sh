@@ -13,12 +13,12 @@ export CUDA_VISIBLE_DEVICES=0
 python src/main_image.py \
  --visualizations_path "$VIS_DIR" \
  --gpu_id 0 \
- --pickles_path 'pickles/E' \
+ --pickles_path 'pickles/F' \
  --verbose \
  --train_or_test 'test' \
- --visualize_all \
- --max_visualizations 1000 \
+ --visualize_triplets \
  --generate_xai \
+ --max_visualizations 10 \
  --results_path 'results' \
  --checkpoint_path 'results/2025-06-19_06-57-17,VGG16_E' \
  --xai_batch_size 1

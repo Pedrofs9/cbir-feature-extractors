@@ -12,8 +12,11 @@ import torch
 from utilities_preproc import data_preprocessing
 
 
-# Seed for reproducibility purposes
+
 def set_seed(seed=10):
+    """
+    # Set seed for reproducibility purposes
+    """
     # Random Seed
     random.seed(seed)
     # Environment Variable Seed

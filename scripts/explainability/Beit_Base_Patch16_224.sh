@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --partition=gpu_min8gb
-#SBATCH --qos=gpu_min8gb_ext
+#SBATCH --partition=gpu_min11gb
+#SBATCH --qos=gpu_min11gb_ext
 #SBATCH --job-name=cind_breloai_att_ret
 #SBATCH --output=results/Beit_Base_Patch16_224.out
 #SBATCH --error=results/Beit_Base_Patch16_224.err
@@ -17,11 +17,11 @@ python src/main_image.py \
  --pickles_path 'pickles/F' \
  --verbose \
  --train_or_test 'test' \
- --visualize_all \
- --max_visualizations 1000 \
+ --visualize_queries \
  --generate_xai \
+ --max_visualizations 10 \
  --results_path 'results' \
- --checkpoint_path 'results/2025-06-19_06-57-17F' \
+ --checkpoint_path 'results/2025-08-06_15-07-04' \
  --xai_batch_size 1
 echo "Finished"
 

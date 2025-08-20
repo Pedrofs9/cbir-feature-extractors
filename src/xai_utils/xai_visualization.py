@@ -1,6 +1,18 @@
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps, ImageDraw, ImageFont
+import os
+import traceback
+import torch
+
+# Local imports
 from xai_utils.utilities_xai import compute_integrated_gradients, process_ig_to_heatmap
+from utilities_visualization import (_concat_images_horizontally, _create_row_with_labels, 
+                                              _setup_triplet_canvas, _load_and_resize_triplet_images, 
+                                              _get_triplet_fonts, _place_triplet_images, 
+                                              _create_gt_rank_mapping, _setup_ranking_canvas, 
+                                              _add_query_to_canvas)
+
+# ========== REUSABLE XAI FUNCTIONS ==========
 
 def create_heatmap_overlay(pil_img, attribution):
     """Standardized heatmap generation with dimension handling"""
@@ -28,159 +40,153 @@ def create_heatmap_overlay(pil_img, attribution):
     base_img = pil_img.convert('RGBA')
     return Image.alpha_composite(base_img, overlay_img).convert('RGB')
 
+def _process_image_with_xai(image_path, model, device, transform, reference_tensor=None):
+    """Process single image with XAI"""
+    image_tensor = transform(image_path).unsqueeze(0).to(device)
+    
+    if reference_tensor is None:
+        reference_tensor = image_tensor
+    
+    attr = compute_integrated_gradients(model, reference_tensor, image_tensor)
+    img = create_heatmap_overlay(Image.open(image_path).convert('RGB'), attr)
+    
+    return img
+
 def apply_xai_to_triplet(query_path, pos_path, neg_path, model, device, transform):
-    """Process all three triplet images with Integrated Gradients"""
+    """Process triplet images with Integrated Gradients"""
     # Process query
+    query_img = _process_image_with_xai(query_path, model, device, transform)
+    
+    # Process positive and negative using query as reference
     query_tensor = transform(query_path).unsqueeze(0).to(device)
-    query_attr = compute_integrated_gradients(model, query_tensor, query_tensor)
-    query_img = create_heatmap_overlay(Image.open(query_path).convert('RGB'), query_attr)
-    
-    # Process positive
-    pos_tensor = transform(pos_path).unsqueeze(0).to(device)
-    pos_attr = compute_integrated_gradients(model, query_tensor, pos_tensor)
-    pos_img = create_heatmap_overlay(Image.open(pos_path).convert('RGB'), pos_attr)
-    
-    # Process negative
-    neg_tensor = transform(neg_path).unsqueeze(0).to(device)
-    neg_attr = compute_integrated_gradients(model, query_tensor, neg_tensor)
-    neg_img = create_heatmap_overlay(Image.open(neg_path).convert('RGB'), neg_attr)
+    pos_img = _process_image_with_xai(pos_path, model, device, transform, query_tensor)
+    neg_img = _process_image_with_xai(neg_path, model, device, transform, query_tensor)
     
     return query_img, pos_img, neg_img
 
 def apply_xai_to_ranking(query_path, neighbor_paths, model, device, transform):
     """Process query and neighbors for ranking visualization with Integrated Gradients"""
-    query_tensor = transform(query_path).unsqueeze(0).to(device)
-    query_attr = compute_integrated_gradients(model, query_tensor, query_tensor)
-    print(f"[XAI] Attribution shape: {query_attr.shape}")
-    query_img = create_heatmap_overlay(
-        Image.open(query_path).convert('RGB'),
-        query_attr
-    )
+    query_img = _process_image_with_xai(query_path, model, device, transform)
     
+    # Process neighbors using query as reference
+    query_tensor = transform(query_path).unsqueeze(0).to(device)
     neighbor_imgs = []
     for path in neighbor_paths:
-        neighbor_tensor = transform(path).unsqueeze(0).to(device)
-        neighbor_attr = compute_integrated_gradients(
-            model, 
-            query_tensor,
-            neighbor_tensor
-        )
-        neighbor_imgs.append(create_heatmap_overlay(
-            Image.open(path).convert('RGB'),
-            neighbor_attr
-        ))
+        neighbor_img = _process_image_with_xai(path, model, device, transform, query_tensor)
+        neighbor_imgs.append(neighbor_img)
     
     return query_img, neighbor_imgs
+
+def _create_xai_ranking_visualization(query_img, neighbor_imgs, model_ordering, gt_ordering, save_path=None):
+    """Create ranking visualization from XAI-processed images"""
+    # Resize all images uniformly
+    img_height = 150
+    resized_query = ImageOps.contain(query_img, (img_height, img_height))
+    resized_neighbors = [ImageOps.contain(img, (img_height, img_height)) for img in neighbor_imgs]
+
+    # Create mapping from image index to ground truth rank
+    gt_rank_mapping = _create_gt_rank_mapping(gt_ordering)
+
+    # Split into two rows
+    num_images = len(model_ordering)
+    split_point = (num_images + 1) // 2
+    top_row_indices = model_ordering[:split_point]
+    bottom_row_indices = model_ordering[split_point:]
+
+    # Create rows using helper function
+    top_row_images = _create_row_with_labels(resized_neighbors, top_row_indices, gt_rank_mapping, 1, True)
+    bottom_row_images = _create_row_with_labels(resized_neighbors, bottom_row_indices, gt_rank_mapping, len(top_row_images)+1, True)
+   
+    # Concatenate images using helper
+    top_row = _concat_images_horizontally(top_row_images)
+    bottom_row = _concat_images_horizontally(bottom_row_images)
+
+    # Create canvas
+    spacing = 20
+    label_height = 30
+    canvas, draw, canvas_width, canvas_height = _setup_ranking_canvas(resized_query, top_row, bottom_row, spacing, label_height)
+
+    # Add query image (heatmapped)
+    query_x = 0
+    query_y = label_height + (canvas_height - label_height - resized_query.height) // 2
+    canvas.paste(resized_query, (query_x, query_y))
     
-def visualize_rankings_with_xai(
-    query_path, 
-    neighbor_paths, 
-    model_ordering, 
-    gt_ordering, 
-    model, 
-    device, 
-    transform, 
-    save_path=None
-):
+    # Add query label
     try:
-        from PIL import ImageOps, ImageDraw, ImageFont
-        import os
-        import traceback
-        
+        font = ImageFont.truetype("arial.ttf", 20)
+    except:
+        font = ImageFont.load_default()
+    label = "QUERY"
+    text_bbox = draw.textbbox((0, 0), label, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+
+    # Center label horizontally above the query image
+    label_x = query_x + (resized_query.width - text_width) // 2
+    label_y = query_y - text_height - 5  # 5 pixels above the image
+
+    draw.text((label_x, label_y), label, font=font, fill='black')
+
+    # Add results
+    results_x = query_x + resized_query.width + spacing
+    results_y = label_height
+    canvas.paste(top_row, (results_x, results_y))
+    canvas.paste(bottom_row, (results_x, results_y + top_row.height + 10))
+
+    # Save or display
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        canvas.save(save_path)
+        print(f"Saved XAI visualization to: {save_path}")
+    else:
+        canvas.show()
+
+# ========== MAIN XAI VISUALIZATION FUNCTIONS ==========
+
+def visualize_rankings_with_xai(query_path, neighbor_paths, model_ordering, gt_ordering, model, device, transform, save_path=None):
+    """
+    Generate XAI visualization for rankings using helper functions
+    """
+    try:
         # Get XAI-processed images
         query_img, neighbor_imgs = apply_xai_to_ranking(
             query_path, neighbor_paths,
             model, device, transform
         )
         
-        # Resize all images uniformly
-        img_height = 150
-        resized_query = ImageOps.contain(query_img, (img_height, img_height))
-        resized_neighbors = [ImageOps.contain(img, (img_height, img_height)) for img in neighbor_imgs]
+        # Create visualization
+        _create_xai_ranking_visualization(
+            query_img, neighbor_imgs, model_ordering, gt_ordering, save_path
+        )
 
-        # Split into two rows (half top, half bottom)
-        num_images = len(model_ordering)
-        split_point = (num_images + 1) // 2
-        top_row_indices = model_ordering[:split_point]
-        bottom_row_indices = model_ordering[split_point:]
+    except Exception as e:
+        print(f"Error generating XAI visualization: {str(e)}")
+        traceback.print_exc()
 
-        # Add labels (RxOy) to heatmapped images
-        def create_row(indices, start_rank=1):
-            row_images = []
-            gt_rank_mapping = {img_idx: rank for rank, img_idx in enumerate(gt_ordering, 1)}
-            for pos, img_idx in enumerate(indices, start_rank):
-                img = resized_neighbors[img_idx].copy()
-                draw = ImageDraw.Draw(img)
-                retrieval_rank = pos
-                gt_rank = gt_rank_mapping[img_idx]
-                label = f"R{retrieval_rank}-O{gt_rank}"
-                text_color = 'green' if retrieval_rank == gt_rank else 'red'
-                try:
-                    font = ImageFont.truetype("arialbd.ttf", 20)
-                except:
-                    font = ImageFont.load_default()
-                text_bbox = draw.textbbox((0, 0), label, font=font)
-                text_width = text_bbox[2] - text_bbox[0]
-                x_pos = (img.width - text_width) // 2
-                draw.text((x_pos+1, 6), label, font=font, fill='black')  # Shadow
-                draw.text((x_pos, 5), label, font=font, fill=text_color)
-                row_images.append(img)
-            return row_images
+def visualize_triplet_with_xai(query_path, pos_path, neg_path, pos_distance, neg_distance, loss_value, correct, model, device, transform, save_path=None):
+    """Triplet visualization with XAI heatmaps using helper functions"""
+    try:
+        # Get XAI-processed images
+        query_img, pos_img, neg_img = apply_xai_to_triplet(
+            query_path, pos_path, neg_path, model, device, transform
+        )
 
-        # Create both rows
-        top_row_images = create_row(top_row_indices, 1)
-        bottom_row_images = create_row(bottom_row_indices, len(top_row_images) + 1)
-
-        # Concatenate images horizontally
-        def concat_images(images):
-            widths = [img.width for img in images]
-            total_width = sum(widths)
-            max_height = max(img.height for img in images)
-            new_img = Image.new('RGB', (total_width, max_height), (255, 255, 255))
-            x_offset = 0
-            for img in images:
-                new_img.paste(img, (x_offset, 0))
-                x_offset += img.width
-            return new_img
-
-        top_row = concat_images(top_row_images)
-        bottom_row = concat_images(bottom_row_images)
-
-        # Create final canvas
-        spacing = 20
-        label_height = 30
-        canvas_width = resized_query.width + spacing + max(top_row.width, bottom_row.width)
-        canvas_height = label_height + top_row.height + bottom_row.height + 10
+        # Resize images
+        img_height = 200
+        query_img = ImageOps.contain(query_img, (img_height, img_height))
+        pos_img = ImageOps.contain(pos_img, (img_height, img_height))
+        neg_img = ImageOps.contain(neg_img, (img_height, img_height))
         
-        canvas = Image.new('RGB', (canvas_width, canvas_height), (255, 255, 255))
-        draw = ImageDraw.Draw(canvas)
-
-        # Add query image (heatmapped)
-        query_x = 0
-        query_y = label_height + (canvas_height - label_height - resized_query.height) // 2
-        canvas.paste(resized_query, (query_x, query_y))
+        # Setup canvas and fonts 
+        canvas, draw, spacing, label_height = _setup_triplet_canvas(query_img, pos_img, neg_img)
+        font, bold_font = _get_triplet_fonts()
         
-        # Add query label
-        try:
-            font = ImageFont.truetype("arial.ttf", 20)
-        except:
-            font = ImageFont.load_default()
-        draw.text((query_x + resized_query.width // 2 - 25, 5), "QUERY", font=font, fill='black')
+        # Place images with labels 
+        canvas = _place_triplet_images(canvas, draw, query_img, pos_img, neg_img, spacing, label_height, font)
 
-        # Add results
-        results_x = query_x + resized_query.width + spacing
-        results_y = label_height
-        canvas.paste(top_row, (results_x, results_y))
-        canvas.paste(bottom_row, (results_x, results_y + top_row.height + 10))
-
-        # Save or display
         if save_path:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             canvas.save(save_path)
-            print(f"Saved visualization to: {save_path}")
-        else:
-            canvas.show()
 
     except Exception as e:
-        print(f"Error in visualization: {str(e)}")
-        traceback.print_exc()
+        print(f"Error generating XAI triplet visualization: {str(e)}")

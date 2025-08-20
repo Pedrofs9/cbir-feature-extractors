@@ -17,13 +17,12 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.nn import TripletMarginLoss
 
-# Project Imports
+# Local imports
 from utilities_preproc import sample_manager
 from utilities_traintest import TripletDataset, train_model, eval_model
 from utilities_imgmodels import MODELS_DICT as models_dict
-#from utilities_bcosmodels import MODELS_DICT as models_dict for BCOS models
 from utilities_visualization import visualize_all_queries 
-from xai_utils.xai_visualization import visualize_rankings_with_xai
+from xai_utils.xai_visualization import visualize_rankings_with_xai, visualize_triplet_with_xai
 
 # WandB Imports
 import wandb
@@ -60,7 +59,9 @@ def load_config(args):
     """Load configuration based on execution mode"""
     if args.train_or_test == "train":
         config_path = args.config_json
-
+    else:
+        config_path = os.path.join(args.checkpoint_path, 'config.json')
+    
     with open(config_path, 'r') as f:
         config = json.load(f)
     
@@ -197,11 +198,10 @@ def main():
                        help="Execution mode: train or test")
     parser.add_argument('--checkpoint_path', type=str, help="Path to model checkpoints")
     parser.add_argument('--verbose', action='store_true', help="Verbose output")
-    parser.add_argument('--visualize', action='store_true', help="Enable ranking visualizations")
     parser.add_argument('--visualizations_path', type=str, help="Path to save ranking visualizations")
-    parser.add_argument('--visualize_all', action='store_true', 
+    parser.add_argument('--visualize_queries', action='store_true', 
                    help="Generate visualizations for all query images")
-    parser.add_argument('--max_visualizations', type=int, default=20,
+    parser.add_argument('--max_visualizations', type=int, default=20000,
                    help="Maximum number of visualizations to generate")    
     parser.add_argument('--visualize_triplets', action='store_true', 
                    help="Generate visualizations for triplets")    
@@ -247,7 +247,7 @@ def main():
     criterion = TripletMarginLoss(margin=config["margin"], p=2)
     
     if args.train_or_test == "train":
-        best_model, final_epoch_loss, _ = train_model(
+        _, final_epoch_loss, _ = train_model(
             model=model,
             train_loader=train_loader,
             test_loader=test_loader,
@@ -261,50 +261,46 @@ def main():
             wandb_run=wandb_run
         )
         
-        if safe_save_model(best_model, path_save / "model_final.pt"):
-            print("Model saved successfully")
-        
         if wandb_run:
             wandb_run.finish()
     else:
         # Evaluation mode
-        if args.visualize_all:
+        if args.visualize_queries:
             visualize_all_queries(
                 model=model,
                 QNS_lists={'test': QNS_list_image_test},
                 transform=model.get_transform(),
                 device=device,
                 output_dir=args.visualizations_path,
-                max_visualizations=min(args.max_visualizations, 500),
+                max_visualizations=args.max_visualizations,
                 generate_xai=args.generate_xai
             )
         else:
+            # Train set: no visualizations
             train_acc, train_ndcg = eval_model(
                 model=model,
                 eval_loader=train_loader,
-                QNS_list_eval=QNS_list_image_train if args.visualize else None,
+                QNS_list_eval=QNS_list_image_train,
                 device=device,
-                visualize=args.visualize_triplets,
-                output_dir=args.visualizations_path,
+                visualize=False,                 
+                output_dir=None,                 
+                max_visualizations=0,            
+                generate_xai=False,              
+                transform=model.get_transform(),
             )
-            
+
+            # Test set: visualization (if requested)
             test_acc, test_ndcg = eval_model(
                 model=model,
                 eval_loader=test_loader,
-                QNS_list_eval=QNS_list_image_test if args.visualize else None,
+                QNS_list_eval=QNS_list_image_test,
                 device=device,
                 visualize=args.visualize_triplets,
                 output_dir=args.visualizations_path,
+                max_visualizations=args.max_visualizations,
+                generate_xai=args.generate_xai,
+                transform=model.get_transform(),
             )
-            
-            if args.generate_xai:
-                visualize_rankings_with_xai(
-                    model=model,
-                    device=device,
-                    eval_dataloader=test_loader,
-                    results_dir=args.results_path,
-                    batch_size=args.xai_batch_size
-                )
 
             # Save evaluation results
             pd.DataFrame({
